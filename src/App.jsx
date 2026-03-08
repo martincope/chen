@@ -2,8 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Building2, Mail, User, FileText, ChevronDown, CheckCircle2, Loader2, Send, Sparkles, ClipboardList, BadgeDollarSign, AlertCircle } from 'lucide-react';
 
-// --- API CONFIG (請將 GAS_URL 替換為你的 Google Apps Script Web App URL) ---
-const GAS_URL = 'YOUR_GOOGLE_APPS_SCRIPT_URL'; 
+// --- API CONFIG (自動從 GitHub Secrets 讀取) ---
+const GAS_URL = import.meta.env.VITE_GAS_URL; 
 
 const agencyDB = {
   '24567891': { companyTitle: '晨曜媒體代理股份有限公司', email: 'sales@morningads.tw' },
