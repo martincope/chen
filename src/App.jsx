@@ -398,6 +398,7 @@ export default function AgencyQuoteApp() {
   const [submitState, setSubmitState] = useState('idle');
   const [errors,      setErrors]      = useState({});
   const [successOpen, setSuccessOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [topError,    setTopError]    = useState('');
   const [successData, setSuccessData] = useState(null);
 
@@ -506,10 +507,27 @@ export default function AgencyQuoteApp() {
     document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
-  const handleSubmit = async () => {
+  // ── Submit：validate → 開確認視窗 ──────────────────────────────────────────
+  const handleSubmit = () => {
     if (!validate()) return;
+    setConfirmOpen(true);
+  };
+
+  // ── 確認後真正送出（含 Excel base64 夾帶） ─────────────────────────────────
+  const handleConfirmSend = async () => {
+    setConfirmOpen(false);
     setSubmitState('loading');
+
+    // 產生 Excel 並轉 base64（UTF-8 安全）
+    const agentList = AGENT_OPTIONS.filter(a => agentChecked[a]);
+    const xmlStr    = buildExcelXML(form, agentList, chosenDetails, calcResult, serviceSubtotal, tax, total);
+    const excelB64  = (() => {
+      const bytes = new TextEncoder().encode('\uFEFF' + xmlStr);
+      let bin = '';
+      for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
+      return btoa(bin);
+    })();
+    const excelFilename = `報價單_${form.clientTitle || '客戶'}_${todayCompact()}.xls`;
 
     const costTotals = {
       toolCostTotal:    sumRows(toolRows),
@@ -521,34 +539,36 @@ export default function AgencyQuoteApp() {
     };
 
     const payload = {
-      clientTitle:     form.clientTitle,
-      clientTaxId:     form.clientTaxId,
-      clientContact:   form.clientContact,
-      clientPhone:     form.clientPhone,
-      clientEmail:     form.clientEmail,
-      projectName:     form.projectName,
-      projectDuration: form.projectDuration,
-      agentName:       AGENT_OPTIONS.filter(a => agentChecked[a]).join('/'),
-      quoteType:       quoteType,
-      contractContact: form.contractContact,
-      contractRep:     form.contractRep,
-      contractTaxId:   form.contractTaxId,
-      contractPhone:   form.contractPhone,
-      contractAddress: form.contractAddress,
-      quoteTerms:      form.quoteTerms,
-      quoteNote:       form.quoteNote,
-      totalPrice:      String(calcResult.finalPrice),
+      clientTitle:      form.clientTitle,
+      clientTaxId:      form.clientTaxId,
+      clientContact:    form.clientContact,
+      clientPhone:      form.clientPhone,
+      clientEmail:      form.clientEmail,
+      projectName:      form.projectName,
+      projectDuration:  form.projectDuration,
+      agentName:        AGENT_OPTIONS.filter(a => agentChecked[a]).join('/'),
+      quoteType:        quoteType,
+      contractContact:  form.contractContact,
+      contractRep:      form.contractRep,
+      contractTaxId:    form.contractTaxId,
+      contractPhone:    form.contractPhone,
+      contractAddress:  form.contractAddress,
+      quoteTerms:       form.quoteTerms,
+      quoteNote:        form.quoteNote,
+      totalPrice:       String(calcResult.finalPrice),
       selectedServices: chosenDetails.map(d => d.name),
-      partnerName1:    partnerRows[0]?.name || '',
-      costDataJson:    JSON.stringify(costTotals),
+      partnerName1:     partnerRows[0]?.name || '',
+      costDataJson:     JSON.stringify(costTotals),
+      excelBase64:      excelB64,
+      excelFilename:    excelFilename,
       ...Object.fromEntries(chosenDetails.map(d => [`qty_${d.name}`, String(d.qty)])),
     };
 
     try {
-      if (GAS_URL && GAS_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_URL') {
+      if (GAS_URL) {
         await fetch(GAS_URL, {
           method: 'POST', mode: 'no-cors',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'text/plain' },
           body: JSON.stringify(payload),
         });
       }
@@ -1153,6 +1173,55 @@ export default function AgencyQuoteApp() {
           </div>
         </div>
       </div>
+
+      {/* ── CONFIRM SEND MODAL ── */}
+      <AnimatePresence>
+        {confirmOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(60,50,45,0.55)', backdropFilter: 'blur(4px)', padding: 16 }}>
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              style={{ width: '100%', maxWidth: 420, borderRadius: 28, overflow: 'hidden', background: M.card, boxShadow: '0 20px 60px rgba(60,50,45,0.2)' }}>
+              {/* header */}
+              <div style={{ padding: '22px 28px 18px', background: `linear-gradient(135deg, ${M.primary}, ${M.primaryDark})`, color: M.primaryText }}>
+                <h2 style={{ fontSize: 18, fontWeight: 900, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Send size={18} />確認寄送報價單
+                </h2>
+                <p style={{ fontSize: 12, opacity: 0.75, margin: '6px 0 0' }}>以下資訊確認無誤後，點「確認寄送」將產出 Excel 並寄信</p>
+              </div>
+              {/* body */}
+              <div style={{ padding: '20px 28px' }}>
+                {[
+                  ['客戶名稱', form.clientTitle],
+                  ['收件 Email', form.clientEmail],
+                  ['專案名稱', form.projectName || '（未填）'],
+                  ['負責窗口', AGENT_OPTIONS.filter(a => agentChecked[a]).join(' / ') || '（未選）'],
+                  ['報價性質', quoteType === 'annual' ? '年約' : '單次／專案'],
+                  ['報價合計（未稅）', calcResult ? currency(calcResult.finalPrice) : '—'],
+                  ['含稅總計', calcResult ? currency(calcResult.taxTotal) : '—'],
+                ].map(([label, val]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '7px 0', borderBottom: `1px solid ${M.border}` }}>
+                    <span style={{ color: M.textMid }}>{label}</span>
+                    <span style={{ fontWeight: 700, color: M.textDark }}>{val}</span>
+                  </div>
+                ))}
+                <div style={{ marginTop: 14, padding: '10px 14px', background: M.sageBg, borderRadius: 10, fontSize: 12, color: M.sageDark }}>
+                  📎 Excel 報價單將作為附件一併寄出
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 18 }}>
+                  <button onClick={() => setConfirmOpen(false)}
+                    style={{ padding: '12px 0', borderRadius: 12, border: `1.5px solid ${M.border}`, background: M.card, color: M.textMid, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                    取消
+                  </button>
+                  <button onClick={handleConfirmSend}
+                    style={{ padding: '12px 0', borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${M.primary}, ${M.primaryDark})`, color: M.primaryText, fontSize: 14, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <Send size={15} />確認寄送
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── SUCCESS MODAL ── */}
       <AnimatePresence>
